@@ -2,7 +2,7 @@
 import { FastifyInstance } from 'fastify';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { prisma } from '../plugins/prisma';
+import type { PrismaClient } from '@prisma/client';
 import { probeQueue } from '../queues/video.queue';
 
 const s3Client = new S3Client({
@@ -13,6 +13,8 @@ const s3Client = new S3Client({
 });
 
 export async function uploadRoutes(fastify: FastifyInstance) {
+  const prisma = (fastify as unknown as { prisma: PrismaClient }).prisma;
+
   /**
    * 1. Initiate Upload
    * Validates user quota and returns a Presigned URL for direct-to-S3 upload.
@@ -24,13 +26,15 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       userId: string;
     };
 
+    request.log.info({ userId, fileName, fileSize }, 'initiate upload');
+
     // 1. Quota Check (Multi-tenancy extension)
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return reply.status(404).send({ error: "User not found" });
 
     // Use BigInt for large file calculations (JS number limit is 2GB for some operations)
     const currentUsage = user.currentUsageBytes || 0n;
-    const quotaBytes = BigInt(user.storageQuotaGb) * 1024n * 1024n * 1024n;
+    const quotaBytes = user.storageQuotaBytes || 0n;
 
     if (currentUsage + BigInt(fileSize) > quotaBytes) {
       return reply.status(403).send({ error: "Quota exceeded. Please clear space or upgrade." });

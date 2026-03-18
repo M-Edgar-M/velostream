@@ -31,6 +31,7 @@ model Video {
   storageKey       String    // The "Prefix" path in MinIO
   status           JobStatus @default(PENDING)
   sizeBytes        BigInt?
+  duration         Float?
   jobs             Job[]
   createdAt        DateTime  @default(now())
 }
