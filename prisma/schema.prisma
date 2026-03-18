@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // url      = env("DATABASE_URL") // Prisma 7: configure in prisma.config.ts
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  currentUsageBytes BigInt   @default(0) // For Quota validation ⚡
+  storageQuotaBytes BigInt   @default(5368709120) // 5GB Default
+  videos            Video[]
+  createdAt         DateTime @default(now())
+}
+
+model Video {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  originalFileName String
+  storageKey       String    // The "Prefix" path in MinIO
+  status           JobStatus @default(PENDING)
+  sizeBytes        BigInt?
+  jobs             Job[]
+  createdAt        DateTime  @default(now())
+}
+
+model Job {
+  id        String    @id @default(uuid())
+  videoId   String
+  video     Video     @relation(fields: [videoId], references: [id])
+  type      String    // e.g., "PROBE", "TRANSCODE_HLS"
+  status    JobStatus @default(PENDING)
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
