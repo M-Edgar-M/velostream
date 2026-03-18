@@ -3,7 +3,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { v4 as uuidv4 } from "uuid";
 
 // Initialize S3 Client for MinIO
-const s3Client = new S3Client({
+export const s3Client = new S3Client({
   endpoint: process.env.MINIO_ENDPOINT, // http://localhost:9000
   credentials: {
     accessKeyId: process.env.MINIO_ACCESS_KEY!,

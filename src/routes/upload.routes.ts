@@ -75,30 +75,40 @@ export async function uploadRoutes(fastify: FastifyInstance) {
 
     const storageKey = decodeURIComponent(rawKey);
 
-    const video = await prisma.video.findFirst({
-      where: {
-        storageKey: storageKey,
-        status: 'PENDING'
-      }
+    request.log.info({ rawKey, storageKey }, 'minio webhook received');
+
+    // First, see if we have ANY record for this key (status may have changed)
+    const videoAnyStatus = await prisma.video.findFirst({
+      where: { storageKey },
+      orderBy: { createdAt: 'desc' },
     });
 
-    if (!video) {
+    if (!videoAnyStatus) {
+      request.log.warn({ storageKey }, 'no video found for key');
       // Return 200 so MinIO doesn't keep retrying the webhook for a non-existent record
-      return reply.status(200).send({ message: "No pending video found for this key" });
+      return reply.status(200).send({ message: "No video found for this key" });
+    }
+
+    if (videoAnyStatus.status !== 'PENDING') {
+      request.log.info(
+        { videoId: videoAnyStatus.id, status: videoAnyStatus.status, storageKey },
+        'video not pending; ignoring webhook'
+      );
+      return reply.status(200).send({ message: "Video already handled", status: videoAnyStatus.status });
     }
 
     // Update status to PROCESSING to signal the start of the pipeline
     await prisma.video.update({
-      where: { id: video.id },
+      where: { id: videoAnyStatus.id },
       data: { status: 'PROCESSING' }
     });
 
 	await probeQueue.add('probe-metadata', { 
-  videoId: video.id, 
-  storageKey: video.storageKey 
+  videoId: videoAnyStatus.id, 
+  storageKey: videoAnyStatus.storageKey 
 });
 
-console.log(`🛰️ Job 'probe-metadata' added to Redis for video ${video.id}`); 
+request.log.info({ videoId: videoAnyStatus.id }, "probe-metadata job added");
 
     // NEXT STEP: Emit job to BullMQ (Phase 2)
     return reply.status(200).send({ success: true });
