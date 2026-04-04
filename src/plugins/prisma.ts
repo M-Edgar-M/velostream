@@ -2,11 +2,17 @@ import fp from 'fastify-plugin';
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg'; // Import the pg driver
+
+// 1. Create the pool and adapter OUTSIDE the plugin function
+const connectionString = `${process.env.DATABASE_URL}`;
+const pool = new pg.Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+
+export const prisma = new PrismaClient({ adapter });
 
 export default fp(async (server) => {
-  const connectionString = `${process.env.DATABASE_URL}`;
-  const adapter = new PrismaPg({ connectionString });
-  const prisma = new PrismaClient({ adapter });
+  // 3. Connect once when Fastify starts
   await prisma.$connect();
 
   server.decorate('prisma', prisma);
@@ -15,7 +21,6 @@ export default fp(async (server) => {
   });
 });
 
-// This helps TypeScript know about the 'prisma' property on the Fastify instance
 declare module 'fastify' {
   interface FastifyInstance {
     prisma: PrismaClient;
