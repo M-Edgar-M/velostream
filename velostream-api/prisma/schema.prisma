@@ -32,6 +32,7 @@ model Video {
   originalFileName String
   storageKey       String    // The "Prefix" path in MinIO
   status           JobStatus @default(PENDING)
+  hlsUrl           String?
   sizeBytes        BigInt?
   duration         Float?
   jobs             Job[]

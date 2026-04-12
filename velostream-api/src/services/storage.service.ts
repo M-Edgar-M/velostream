@@ -1,6 +1,14 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { v4 as uuidv4 } from "uuid";
+import path from "path";
+import dotenv from "dotenv";
+
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+
+if (!process.env.MINIO_ACCESS_KEY) {
+  console.error("❌ CRITICAL: MinIO credentials not found in process.env!");
+}
 
 // Initialize S3 Client for MinIO
 export const s3Client = new S3Client({

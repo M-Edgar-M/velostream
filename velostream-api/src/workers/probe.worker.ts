@@ -1,5 +1,5 @@
 import 'dotenv/config'; // Absolute first line to fix environment hoisting
-import { Worker } from "bullmq";
+import { Worker, Queue } from "bullmq";
 import { prisma } from "../plugins/prisma.ts"; // Now importing the named constant
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -9,6 +9,8 @@ import { s3Client } from "../services/storage.service.ts";
 import { redisConnection } from "../queues/video.queue.ts";
 
 const execPromise = promisify(exec);
+
+    const transcodeQueue = new Queue('video-transcode', {connection: redisConnection });
 
 export const probeWorker = new Worker('video-probe', async (job) => {
   const { videoId, storageKey } = job.data;
@@ -45,6 +47,15 @@ export const probeWorker = new Worker('video-probe', async (job) => {
     });
 
     console.log(`✅ Video ${videoId} successfully probed. Duration: ${duration}s`);
+   await transcodeQueue.add('start-transcode', {
+	   videoId: videoId,
+	   storageKey: storageKey,
+	   url: signedUrl,
+
+   }); 
+   console.log(`PUSHED ${videoId} to Transcode Queue`);
+
+
   } catch (error) {
     console.error(`❌ Probe failed for ${videoId}:`, error);
 
