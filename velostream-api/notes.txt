@@ -3,3 +3,7 @@ sudo docker exec -it velostream-postgres-1 psql -U user -d velostream
 
 // CONNECT TO REDIS 
 sudo docker exec -it velostream-redis-1 redis-cli -p 6379
+
+
+// RUN PRISMA STUDIO
+npx prisma studio

@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import prismaPlugin from "./plugins/prisma";
 import { uploadRoutes } from "./routes/upload.routes";
+import { internalRoutes} from "./routes/internal.routes";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -11,6 +12,7 @@ async function start() {
   // Register plugins and routes
   await server.register(prismaPlugin);
   await server.register(uploadRoutes);
+  await server.register(internalRoutes);
 
   try {
     await server.listen({ port: 3000, host: "0.0.0.0" });

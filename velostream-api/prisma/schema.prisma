@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // url      = env("DATABASE_URL") // Prisma 7: configure in prisma.config.ts
+ //  url      = env("DATABASE_URL") // Prisma 7: configure in prisma.config.ts
 }
 
 enum JobStatus {

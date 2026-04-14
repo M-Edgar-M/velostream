@@ -6,11 +6,14 @@ export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: {
     path: 'prisma/migrations',
+    seed: 'npx ts-node prisma/seed.ts',
+
   },
   datasource: {
     provider: 'postgresql',
     url: `${process.env.DATABASE_URL}`,
-    adapter: new PrismaPg({ connectionString: `${process.env.DATABASE_URL}` }),
+  //  adapter: new PrismaPg({ connectionString: `${process.env.DATABASE_URL}` }),
+
   },
 })
 
