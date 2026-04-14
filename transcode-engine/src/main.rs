@@ -81,11 +81,20 @@ async fn process_video(data: JobData) {
         .status();
         
     match status {
-        Ok(s) if s.success() => {
+          Ok(s) if s.success() => {
             println!("Transcoding complete for {}", data.video_id);
-            notify_api_completion(&data.video_id).await?;
-        },
-        _ => eprintln!("FFmped failed for {}", data.video_id),
+
+            // handle async error manually
+            if let Err(e) = notify_api_completion(&data.video_id).await {
+                eprintln!("Failed to notify API: {}", e);
+            }
+        }
+        Ok(_) => {
+            eprintln!("FFmpeg exited with non-zero status for {}", data.video_id);
+        }
+        Err(e) => {
+            eprintln!("Failed to start FFmpeg: {}", e);
+        }
 }
 }
 
@@ -96,7 +105,7 @@ async fn notify_api_completion(video_id: &str) -> Result<(), Box<dyn std::error:
     let hls_path = format!("transcoded/{}/playlist.m3u8", video_id);
 
     let payload = CompletionRequest {
-        status: "READY".to_string(),
+        status: "COMPLETED".to_string(),
         hls_path,
     };
 
