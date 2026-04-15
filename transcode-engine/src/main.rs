@@ -2,7 +2,7 @@ use dotenv::dotenv;
 use std::env;
 use redis::AsyncCommands;
 use serde::{Serialize, Deserialize};
-use std::process::Command;
+use tokio::process::Command;
 use std::fs;
 use tokio::time::{sleep, Duration};
 
@@ -80,7 +80,7 @@ async fn process_video(data: JobData) {
         .arg(format!("{}/playlist.m3u8", output_dir))
         .status();
         
-    match status {
+    match status.await {
           Ok(s) if s.success() => {
             println!("Transcoding complete for {}", data.video_id);
 

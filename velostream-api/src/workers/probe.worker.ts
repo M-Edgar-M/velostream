@@ -21,7 +21,7 @@ export const probeWorker = new Worker('video-probe', async (job) => {
       Key: storageKey,
     });
 
-    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 300 });
+    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 86400});
     console.log(`🔎 Probing video ${videoId}...`);
 
     // Run ffprobe via shell
