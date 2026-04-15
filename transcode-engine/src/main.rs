@@ -1,10 +1,12 @@
+mod s3upload;
+
 use dotenv::dotenv;
-use std::env;
 use redis::AsyncCommands;
-use serde::{Serialize, Deserialize};
-use tokio::process::Command;
+use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
-use tokio::time::{sleep, Duration};
+use tokio::process::Command;
+use tokio::time::{Duration, sleep};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JobData {
@@ -12,13 +14,6 @@ struct JobData {
     video_id: String,
     #[serde(rename = "url")]
     url: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct BullJob {
-    id: String,
-    name: String,
-    data: String,
 }
 
 #[derive(Serialize)]
@@ -47,60 +42,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let job_hash: std::collections::HashMap<String, String> = con.hgetall(&job_key).await?;
             if let Some(data_str) = job_hash.get("data") {
                 let data: JobData = serde_json::from_str(data_str)?;
-                println!("Received job [{}]: Processing Video {}",id, data.video_id);
-                process_video(data).await;
+                println!("Received job [{}]: Processing Video {}", id, data.video_id);
+                if process_video(&data).await {
+                    println!("Starting upload to MinIO...");
+                    match s3upload::upload_hls_to_minio(&data.video_id).await {
+                        Ok(_) => {
+                            let _ = notify_api_completion(&data.video_id).await;
+
+                            let output_dir = format!("outputs/{}", data.video_id);
+                            if let Err(e) = fs::remove_dir_all(&output_dir) {
+                                eprintln!(
+                                    "⚠️ Failed to clean up local files at {}: {}",
+                                    output_dir, e
+                                );
+                            } else {
+                                println!("Local workspace cleaned for {}", data.video_id);
+                            }
+                        }
+                        Err(e) => eprintln!("❌ Upload failed: {}", e),
+                    }
+                }
             }
         }
-            sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(500)).await;
     }
 }
-async fn process_video(data: JobData) {
-
+async fn process_video(data: &JobData) -> bool {
     let output_dir = format!("outputs/{}", data.video_id);
 
-
     if let Err(e) = fs::create_dir_all(&output_dir) {
-
         eprint!("Failed to create directory: {}", e);
-        
-        return;
+
+        return false;
     }
 
     println!("Starting HLS Transcode for {}...", data.video_id);
 
-
     let status = Command::new("ffmpeg")
-        .arg("-i").arg(&data.url)
-        .arg("-codec:v").arg("libx264")
-        .arg("-codec:a").arg("aac")
-        .arg("-map").arg("0")
-        .arg("-f").arg("hls")
-        .arg("-hls_time").arg("10")
-        .arg("-hls_playlist_type").arg("event")
+        .arg("-i")
+        .arg(&data.url)
+        .arg("-codec:v")
+        .arg("libx264")
+        .arg("-codec:a")
+        .arg("aac")
+        .arg("-map")
+        .arg("0")
+        .arg("-f")
+        .arg("hls")
+        .arg("-hls_time")
+        .arg("10")
+        .arg("-hls_playlist_type")
+        .arg("event")
         .arg(format!("{}/playlist.m3u8", output_dir))
         .status();
-        
-    match status.await {
-          Ok(s) if s.success() => {
-            println!("Transcoding complete for {}", data.video_id);
 
-            // handle async error manually
-            if let Err(e) = notify_api_completion(&data.video_id).await {
-                eprintln!("Failed to notify API: {}", e);
-            }
+    match status.await {
+        Ok(s) if s.success() => {
+            println!("Transcoding complete for {}", data.video_id);
+            true
         }
         Ok(_) => {
             eprintln!("FFmpeg exited with non-zero status for {}", data.video_id);
+            false
         }
         Err(e) => {
             eprintln!("Failed to start FFmpeg: {}", e);
+            false
         }
-}
+    }
 }
 
 async fn notify_api_completion(video_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-
 
     let hls_path = format!("transcoded/{}/playlist.m3u8", video_id);
 
@@ -109,18 +122,12 @@ async fn notify_api_completion(video_id: &str) -> Result<(), Box<dyn std::error:
         hls_path,
     };
 
-
     let url = format!("http://localhost:3000/internal/video/{}/complete", video_id);
 
-
-    let res = client.patch(url)
-        .json(&payload)
-        .send()
-        .await?;
+    let res = client.patch(url).json(&payload).send().await?;
 
     if res.status().is_success() {
-       println!("Successfully notified Node.js API for video {}", video_id); 
-
+        println!("Successfully notified Node.js API for video {}", video_id);
     } else {
         eprintln!("Failed to notify API. Status: {}", res.status());
     }

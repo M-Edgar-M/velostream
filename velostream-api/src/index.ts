@@ -12,7 +12,7 @@ async function start() {
   // Register plugins and routes
   await server.register(prismaPlugin);
   await server.register(uploadRoutes);
-  await server.register(internalRoutes);
+  await server.register(internalRoutes, { prefix: '/internal' });
 
   try {
     await server.listen({ port: 3000, host: "0.0.0.0" });
@@ -22,5 +22,9 @@ async function start() {
     process.exit(1);
   }
 }
+
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
 
 start();

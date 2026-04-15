@@ -32,5 +32,6 @@ Thumbs.db
 
 # Rust / Cargo (transcode-engine)
 transcode-engine/target/
+transcode-engine/outputs/
 **/*.rs.bk
 *.pdb
