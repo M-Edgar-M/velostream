@@ -24,7 +24,7 @@
  */
 
 import 'dotenv/config';
-import { Queue, Worker, QueueEvents } from 'bullmq';
+import { Queue } from 'bullmq';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
@@ -105,12 +105,23 @@ interface BenchmarkReport {
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-/** Returns the RSS (resident set size) in kB for a given PID via `ps`. */
+/** Returns the RSS (resident set size) in kB for a given PID via `ps`.
+ *  Sums the RSS of the process AND all its children (e.g. ffmpeg spawned
+ *  via child_process.exec), so the measurement reflects the full workload.
+ */
 async function sampleRssKb(pid: number): Promise<number> {
   try {
-    const { stdout } = await execAsync(`ps -o rss= -p ${pid}`);
-    const val = parseInt(stdout.trim(), 10);
-    return isNaN(val) ? 0 : val;
+    // Get RSS of the target process + all descendants in one call
+    const { stdout } = await execAsync(
+      `ps -o rss= -p ${pid} && ps --ppid ${pid} -o rss= 2>/dev/null || true`
+    );
+    return stdout
+      .trim()
+      .split('\n')
+      .reduce((sum, line) => {
+        const val = parseInt(line.trim(), 10);
+        return sum + (isNaN(val) ? 0 : val);
+      }, 0);
   } catch {
     return 0; // process may have exited
   }
@@ -119,7 +130,13 @@ async function sampleRssKb(pid: number): Promise<number> {
 /** Returns the PID of the first process whose command matches the pattern. */
 async function findPid(pattern: string): Promise<number | null> {
   try {
-    const { stdout } = await execAsync(`pgrep -f "${pattern}" | head -1`);
+    // Modify the pattern to avoid matching the pgrep command itself if it's a simple string
+    // e.g. "transcode-engine" -> "[t]ranscode-engine"
+    const safePattern = pattern.length > 1 && !pattern.includes('[') 
+      ? `[${pattern[0]}]${pattern.slice(1)}` 
+      : pattern;
+      
+    const { stdout } = await execAsync(`pgrep -f "${safePattern}" | head -1`);
     const pid = parseInt(stdout.trim(), 10);
     return isNaN(pid) ? null : pid;
   } catch {
@@ -245,23 +262,26 @@ async function runNodeLegacyBenchmark(fileSizeMB: number): Promise<EngineResult>
   console.log('🟡  Phase 1 — Node.js Legacy Worker (child_process.exec)');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-  // Find the Node.js API process PID (Fastify server).
-  const nodePid = await findPid('tsx.*src/index');
+  // Find the Node.js API process PID (which also runs the transcode worker).
+  // We match on 'tsx' + 'src/index' to avoid matching the benchmark process itself.
+  const nodePid = await findPid('tsx.*watch.*src/index');
   if (!nodePid) {
-    console.warn('⚠️  Could not find the Fastify API process (tsx src/index). RSS will read as 0.\n   Make sure the API is running with: pnpm dev:api');
+    console.warn('⚠️  Could not find the Fastify API process. Trying alternative pattern...');
+    // Fallback: try matching with just tsx src/index
+    const fallbackPid = await findPid('tsx.*src/index');
+    if (!fallbackPid) {
+      console.warn('⚠️  Still no match. RSS will read as 0.\n   Make sure the API is running with: pnpm dev:api');
+    } else {
+      console.log(`📍  Node.js API PID (fallback): ${fallbackPid}`);
+    }
+    var effectiveNodePid = fallbackPid;
   } else {
     console.log(`📍  Node.js API PID: ${nodePid}`);
+    var effectiveNodePid = nodePid;
   }
 
-  const telemetry = startTelemetryCollection(nodePid ?? process.pid);
+  const telemetry = startTelemetryCollection(effectiveNodePid ?? process.pid);
 
-  // BullMQ QueueEvents lets us listen for completed/failed on the queue.
-  const queueEvents = new QueueEvents('video-transcode-legacy', { connection: REDIS_OPTS });
-  await queueEvents.waitUntilReady();
-
-  const jobMetrics: JobMetric[] = [];
-
-  // We'll push all 5 jobs at once then wait for each to complete.
   const jobPromises: Promise<JobMetric>[] = [];
 
   for (let i = 0; i < CONCURRENCY; i++) {
@@ -274,54 +294,20 @@ async function runNodeLegacyBenchmark(fileSizeMB: number): Promise<EngineResult>
         const bullJob = await legacyQueue.add('benchmark-transcode', {
           videoId,
           storageKey: `benchmark/${videoId}.mp4`,
-          url: TEST_VIDEO_PATH,  // local file path — ffmpeg handles file:// natively
+          url: TEST_VIDEO_PATH,  // absolute file path — ffmpeg handles it natively
         });
 
         console.log(`   ↳ Job [${i + 1}/${CONCURRENCY}] enqueued  jobId=${bullJob.id}  videoId=${videoId}`);
 
-        // Wait for BullMQ 'completed' or 'failed' event for this specific job.
-        const durationMs = await new Promise<number>((resolve, reject) => {
-          const onCompleted = ({ jobId }: { jobId: string }) => {
-            if (jobId !== bullJob.id) return;
-            cleanup();
+        // Poll DB for completion — identical to the Rust path.
+        // The Node worker calls PATCH /internal/video/:id/complete which sets
+        // the DB status to COMPLETED, just like the Rust engine does.
+        const finalStatus = await waitForCompletion(videoId);
+        const durationMs = Date.now() - enqueueTime;
 
-            // Mark the DB record as COMPLETED (the legacy worker doesn't call the API)
-            prisma.video.update({
-              where: { id: videoId },
-              data: { status: 'COMPLETED' },
-            }).catch(() => { });
-
-            resolve(Date.now() - enqueueTime);
-          };
-
-          const onFailed = ({ jobId, failedReason }: { jobId: string; failedReason: string }) => {
-            if (jobId !== bullJob.id) return;
-            cleanup();
-            console.warn(`   ⚠️  Job ${jobId} failed: ${failedReason}`);
-
-            prisma.video.update({
-              where: { id: videoId },
-              data: { status: 'FAILED' },
-            }).catch(() => { });
-
-            resolve(Date.now() - enqueueTime); // still record timing
-          };
-
-          const cleanup = () => {
-            queueEvents.off('completed', onCompleted);
-            queueEvents.off('failed', onFailed);
-          };
-
-          queueEvents.on('completed', onCompleted);
-          queueEvents.on('failed', onFailed);
-
-          // Safety timeout
-          setTimeout(() => {
-            cleanup();
-            console.warn(`   ⚠️  Job ${bullJob.id} timed out after ${COMPLETION_TIMEOUT / 1000}s`);
-            resolve(Date.now() - enqueueTime);
-          }, COMPLETION_TIMEOUT);
-        });
+        if (finalStatus !== 'COMPLETED') {
+          console.warn(`   ⚠️  Job ${bullJob.id} finished with status: ${finalStatus} (${durationMs} ms)`);
+        }
 
         return {
           jobId: bullJob.id!,
@@ -333,11 +319,9 @@ async function runNodeLegacyBenchmark(fileSizeMB: number): Promise<EngineResult>
     );
   }
 
-  console.log(`\n⏳  Waiting for all ${CONCURRENCY} Node.js jobs to complete...\n`);
+  console.log(`\n⏳  Waiting for all ${CONCURRENCY} Node.js jobs to complete (polling DB every ${DB_POLL_INTERVAL}ms)...\n`);
   const results = await Promise.all(jobPromises);
   const { latencies, peakRssKb } = telemetry.stop();
-
-  await queueEvents.close();
 
   // Distribute the aggregate peak RSS across jobs (best we can without per-job isolation)
   const metrics: JobMetric[] = results.map((r) => ({ ...r, memoryRssKb: peakRssKb }));
