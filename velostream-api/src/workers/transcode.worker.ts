@@ -136,7 +136,7 @@ export const legacyTranscodeWorker = new Worker(
       throw err;
     }
   },
-  { connection: redisConnection, autorun: false },
+  { connection: redisConnection, autorun: false, concurrency: 2 },
 );
 
 // ────────────────────────────────────────────────────────────────────────────

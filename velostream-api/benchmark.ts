@@ -105,16 +105,32 @@ interface BenchmarkReport {
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-/** Returns the RSS (resident set size) in kB for a given PID via `ps`.
- *  Sums the RSS of the process AND all its children (e.g. ffmpeg spawned
- *  via child_process.exec), so the measurement reflects the full workload.
+/** Returns the RSS (resident set size) in kB for a given PID.
+ *  Recursively finds all child processes and sums their RSS, so FFmpeg's
+ *  memory is accurately counted in the total.
  */
-async function sampleRssKb(pid: number): Promise<number> {
+async function getTotalRss(pid: number): Promise<number> {
+  const allPids = new Set<number>([pid]);
+  let currentPids = [pid];
+
+  while (currentPids.length > 0) {
+    try {
+      const { stdout } = await execAsync(`pgrep -P ${currentPids.join(',')}`);
+      const kids = stdout
+        .trim()
+        .split('\n')
+        .map(Number)
+        .filter((n) => !isNaN(n) && !allPids.has(n));
+      for (const kid of kids) allPids.add(kid);
+      currentPids = kids;
+    } catch {
+      break; // pgrep returns error if no children found
+    }
+  }
+
   try {
-    // Get RSS of the target process + all descendants in one call
-    const { stdout } = await execAsync(
-      `ps -o rss= -p ${pid} && ps --ppid ${pid} -o rss= 2>/dev/null || true`
-    );
+    const pidsStr = Array.from(allPids).join(',');
+    const { stdout } = await execAsync(`ps -o rss= -p ${pidsStr}`);
     return stdout
       .trim()
       .split('\n')
@@ -203,7 +219,7 @@ function startTelemetryCollection(pid: number): {
   }, API_PROBE_INTERVAL);
 
   const rssInterval = setInterval(async () => {
-    const rss = await sampleRssKb(pid);
+    const rss = await getTotalRss(pid);
     if (rss > peakRssKb) peakRssKb = rss;
   }, RSS_POLL_INTERVAL);
 

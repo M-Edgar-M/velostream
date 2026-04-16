@@ -34,6 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Listening for transcodeing jobs...");
 
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
+
     loop {
         let job_id: Option<String> = con.rpop("bull:video-transcode:wait", None).await?;
         if let Some(id) = job_id {
@@ -43,10 +45,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(data_str) = job_hash.get("data") {
                 let data: JobData = serde_json::from_str(data_str)?;
                 println!("Received job [{}]: Processing Video {}", id, data.video_id);
-                if process_video(&data).await {
-                    println!("Starting upload to MinIO...");
-                    match s3upload::upload_hls_to_minio(&data.video_id).await {
-                        Ok(_) => {
+
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+
+                tokio::spawn(async move {
+                    if process_video(&data).await {
+                        println!("Starting upload to MinIO...");
+                        let mut upload_success = false;
+                        if let Err(e) = s3upload::upload_hls_to_minio(&data.video_id).await {
+                            eprintln!("❌ Upload failed: {}", e);
+                        } else {
+                            upload_success = true;
+                        }
+
+                        if upload_success {
                             let _ = notify_api_completion(&data.video_id).await;
 
                             let output_dir = format!("outputs/{}", data.video_id);
@@ -59,12 +71,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("Local workspace cleaned for {}", data.video_id);
                             }
                         }
-                        Err(e) => eprintln!("❌ Upload failed: {}", e),
                     }
-                }
+                    drop(permit);
+                });
             }
+        } else {
+            sleep(Duration::from_millis(500)).await;
         }
-        sleep(Duration::from_millis(500)).await;
     }
 }
 async fn process_video(data: &JobData) -> bool {
@@ -79,6 +92,7 @@ async fn process_video(data: &JobData) -> bool {
     println!("Starting HLS Transcode for {}...", data.video_id);
 
     let status = Command::new("ffmpeg")
+        .arg("-y")
         .arg("-i")
         .arg(&data.url)
         .arg("-codec:v")

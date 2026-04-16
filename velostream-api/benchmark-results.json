@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-04-16T12:46:51.690Z",
+  "concurrency": 5,
+  "testVideoPath": "/home/edgar/educational/velostream/velostream-api/test-assets/under_5_mb.mp4",
+  "fileSizeMB": 4.103053092956543,
+  "node": {
+    "engine": "node-legacy",
+    "jobs": [
+      {
+        "jobId": "21",
+        "videoId": "61b97d23-ef8e-473b-ad8d-9e4ec28b7500",
+        "durationMs": 10023,
+        "memoryRssKb": 2889488
+      },
+      {
+        "jobId": "22",
+        "videoId": "592f4405-9ea8-4762-a3a7-4c8c89b7034f",
+        "durationMs": 10031,
+        "memoryRssKb": 2889488
+      },
+      {
+        "jobId": "23",
+        "videoId": "4221995c-7fd3-49f6-9a7e-64e4fae962e4",
+        "durationMs": 20037,
+        "memoryRssKb": 2889488
+      },
+      {
+        "jobId": "24",
+        "videoId": "85300539-6ae9-4057-90c7-e824a670d8cf",
+        "durationMs": 20053,
+        "memoryRssKb": 2889488
+      },
+      {
+        "jobId": "25",
+        "videoId": "d48f127b-d3fa-49a6-b33f-868fe7c12471",
+        "durationMs": 28060,
+        "memoryRssKb": 2889488
+      }
+    ],
+    "avgDurationMs": 17640.8,
+    "peakMemoryRssKb": 2889488,
+    "apiLatencyP50Ms": 4,
+    "apiLatencyP95Ms": 12,
+    "throughputMBps": 0.23258883344046433
+  },
+  "rust": {
+    "engine": "rust",
+    "jobs": [
+      {
+        "jobId": "16",
+        "videoId": "604fe325-62f8-44c6-81d3-a45ea3380274",
+        "durationMs": 10023,
+        "memoryRssKb": 2620292
+      },
+      {
+        "jobId": "17",
+        "videoId": "e8f72ff1-9cf3-43e3-8fd6-a1f6e8b32238",
+        "durationMs": 10023,
+        "memoryRssKb": 2620292
+      },
+      {
+        "jobId": "18",
+        "videoId": "8fbdf765-fa8c-4076-b5f3-ea242fefa960",
+        "durationMs": 24064,
+        "memoryRssKb": 2620292
+      },
+      {
+        "jobId": "19",
+        "videoId": "c9731909-0a84-4c65-847f-eb267d877695",
+        "durationMs": 24065,
+        "memoryRssKb": 2620292
+      },
+      {
+        "jobId": "20",
+        "videoId": "4525842a-23f3-455f-ac9f-226f3543e179",
+        "durationMs": 32105,
+        "memoryRssKb": 2620292
+      }
+    ],
+    "avgDurationMs": 20056,
+    "peakMemoryRssKb": 2620292,
+    "apiLatencyP50Ms": 3,
+    "apiLatencyP95Ms": 11,
+    "throughputMBps": 0.2045798311206892
+  }
+}
