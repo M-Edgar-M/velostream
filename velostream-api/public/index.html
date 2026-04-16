@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VeloStream Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; background: #f4f4f5; color: #1f2937; }
+    .container { max-width: 600px; margin: auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .upload-btn { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; background: #3b82f6; color: white; border: none; border-radius: 4px; }
+    .upload-btn:hover { background: #2563eb; }
+    video { width: 100%; margin-top: 2rem; background: #000; border-radius: 8px; aspect-ratio: 16/9; }
+    .input-row { display: flex; gap: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 VeloStream Flow</h1>
+    
+    <label>1. Select File &lt; 20MB</label><br/>
+    <input type="file" id="videoInput" accept="video/mp4" />
+    <button id="uploadBtn" class="upload-btn">Upload</button>
+
+    <div id="status" style="margin-top: 1rem; color: #6b7280; font-style: italic;">Ready</div>
+
+    <h2 style="margin-top: 2rem;">2. Watch Output</h2>
+    <div class="input-row">
+      <input type="text" id="streamUrl" placeholder="http://localhost:9000/velostream-uploads/..." style="flex: 1; padding:0.5rem; border-radius: 4px; border: 1px solid #ccc;" />
+      <button id="playBtn" class="upload-btn" style="margin-top: 0;">Play</button>
+    </div>
+    
+    <video id="videoPlayer" controls></video>
+  </div>
+
+  <script>
+    const elStatus = document.getElementById('status');
+    let testUserId = null;
+
+    // 1. Fetch the seeded test user ON LOAD
+    fetch('/internal/test-user')
+      .then(res => res.json())
+      .then(data => {
+        if (data.id) {
+          testUserId = data.id;
+          elStatus.innerText = `Ready (Logged in as ${data.email})`;
+        } else {
+          elStatus.innerText = 'Error: Test user not found. Did you seed the DB?';
+        }
+      })
+      .catch(err => elStatus.innerText = 'Error fetching user: ' + err);
+
+    // 2. Handle Upload
+    document.getElementById('uploadBtn').addEventListener('click', async () => {
+      const fileInput = document.getElementById('videoInput');
+      const file = fileInput.files[0];
+      
+      if (!file) return alert('Please select a file first.');
+      if (!testUserId) return alert('User ID not loaded. Please wait and try again.');
+
+      try {
+        elStatus.innerText = 'Requesting upload URL...';
+        
+        // A. Request Presigned URL
+        const initRes = await fetch('/uploads/initiate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileSize: file.size,
+            userId: testUserId
+          })
+        });
+        
+        const { uploadUrl, videoId } = await initRes.json();
+        
+        if (!uploadUrl) throw new Error('Failed to get upload URL');
+
+        elStatus.innerText = 'Uploading to MinIO directly...';
+
+        // B. Upload file to MinIO
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: {
+            'Content-Type': file.type || 'video/mp4'
+          }
+        });
+
+        if (!uploadRes.ok) throw new Error('Upload failed with status ' + uploadRes.status);
+        
+        elStatus.innerText = 'Upload complete! Waiting for transcode (check Rust output logs)...';
+
+        // Suggest the HLS URL it will eventually generate
+        // Based on the code, Rust produces outputs/videoId/playlist.m3u8 
+        // We can pre-fill the stream URL for convenience.
+        const predictedUrl = `http://localhost:9000/velostream-uploads/outputs/${videoId}/playlist.m3u8`;
+        document.getElementById('streamUrl').value = predictedUrl;
+
+      } catch (err) {
+        console.error(err);
+        elStatus.innerText = `Error: ${err.message}`;
+      }
+    });
+
+    // 3. Handle Playback
+    document.getElementById('playBtn').addEventListener('click', () => {
+      const url = document.getElementById('streamUrl').value;
+      const video = document.getElementById('videoPlayer');
+      
+      if (!url) return alert('Please enter an HLS stream URL');
+
+      if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+          video.play();
+        });
+        // Error handling
+        hls.on(Hls.Events.ERROR, function (event, data) {
+           if (data.fatal) {
+              console.error('Fatal HLS error:', data);
+              elStatus.innerText = 'Error: Stream not ready yet or invalid URL';
+           }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.addEventListener('loadedmetadata', function() {
+          video.play();
+        });
+      }
+    });
+  </script>
+</body>
+</html>

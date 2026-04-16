@@ -1,8 +1,36 @@
 version: "3.9"
 
 services:
+  api:
+    build:
+      context: ./velostream-api
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - velostream_net
+
+  worker:
+    build:
+      context: ./transcode-engine
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - velostream_net
+
   postgres:
-    image: postgres:15
+    image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: user
@@ -11,7 +39,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d velostream"]
       interval: 10s
@@ -22,8 +50,6 @@ services:
 
   minio:
     image: minio/minio
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     command: server --console-address ":9001" /data
     environment:
@@ -33,9 +59,29 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      - ./docker/minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - velostream_net
+
+  minio-setup:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - velostream_net
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/velostream-uploads --ignore-existing;
+      /usr/bin/mc anonymous set public myminio/velostream-uploads;
+      exit 0;
+      "
 
   redis:
     image: redis:7-alpine
@@ -44,7 +90,7 @@ services:
     ports:
       - "6380:6379"
     volumes:
-      - redis_data:/data
+      - ./docker/redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
       interval: 10s
@@ -52,11 +98,6 @@ services:
       retries: 5
     networks:
       - velostream_net
-
-volumes:
-  postgres_data:
-  minio_data:
-  redis_data:
 
 networks:
   velostream_net:

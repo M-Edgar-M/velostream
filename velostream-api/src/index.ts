@@ -9,9 +9,12 @@ dotenv.config();
 const server = Fastify({ logger: true });
 
 async function start() {
-  // Register plugins and routes
   await server.register(prismaPlugin);
   await server.register(uploadRoutes);
+  await server.register(require('@fastify/static'), {
+    root: require('path').join(__dirname, '..', 'public'),
+    prefix: '/',
+  });
   await server.register(internalRoutes, { prefix: '/internal' });
 
   try {

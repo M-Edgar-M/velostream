@@ -5,9 +5,12 @@ import type { PrismaClient } from '@prisma/client';
 import { probeQueue } from '../queues/video.queue';
 
 const s3Client = new S3Client({
-  endpoint: "http://localhost:9000", // MinIO address
-  credentials: { accessKeyId: 'minioadmin', secretAccessKey: 'minioadmin' },
-  region: 'us-east-1', // Default for MinIO
+  endpoint: process.env.MINIO_ENDPOINT || "http://localhost:9000",
+  credentials: { 
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin', 
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin' 
+  },
+  region: process.env.AWS_REGION || 'us-east-1',
   forcePathStyle: true,
 });
 
@@ -57,7 +60,11 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       ContentType: 'video/mp4', // Optional: enforce type
     });
 
-    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    let uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+
+    if (process.env.MINIO_ENDPOINT && process.env.MINIO_PUBLIC_URL) {
+      uploadUrl = uploadUrl.replace(process.env.MINIO_ENDPOINT, process.env.MINIO_PUBLIC_URL);
+    }
 
     return { uploadUrl, videoId: video.id };
   });

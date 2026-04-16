@@ -24,4 +24,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({ error: "Internal Server Error" });
     }
   });
+
+  fastify.get('/test-user', async (request, reply) => {
+    const user = await prisma.user.findFirst();
+    if (!user) return reply.status(404).send({ error: "No user found. Did you run the seed script?" });
+    return { id: user.id, email: user.email };
+  });
 }
