@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   api:
     build:
@@ -8,6 +6,10 @@ services:
       - "3000:3000"
     env_file:
       - .env.docker
+    # Ensure variables are explicitly passed if the code isn't picking up the file
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://user:password@postgres:5432/velostream
     depends_on:
       postgres:
         condition: service_healthy
@@ -21,6 +23,8 @@ services:
       context: ./transcode-engine
     env_file:
       - .env.docker
+    environment:
+      - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,9 +79,10 @@ services:
         condition: service_healthy
     networks:
       - velostream_net
+    # FIXED: mc config is old; use mc alias set.
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
       /usr/bin/mc mb myminio/velostream-uploads --ignore-existing;
       /usr/bin/mc anonymous set public myminio/velostream-uploads;
       exit 0;
@@ -87,12 +92,13 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
+    # Keep the mapping 6380:6379 so you can see it from your host machine
     ports:
       - "6380:6379"
     volumes:
       - ./docker/redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -101,3 +107,4 @@ services:
 
 networks:
   velostream_net:
+    driver: bridge

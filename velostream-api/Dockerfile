@@ -39,5 +39,6 @@ COPY --from=builder /app/public ./public
 
 EXPOSE 3000
 
+RUN pnpm approve-builds @prisma/engines
 # The startup command
-CMD ["sh", "-c", "pnpx prisma migrate deploy && pnpx prisma db seed && npx tsx src/index.ts"]
+CMD ["sh", "-c", "npx prisma db push && npx tsx prisma/seed.ts && npx tsx src/index.ts"]
