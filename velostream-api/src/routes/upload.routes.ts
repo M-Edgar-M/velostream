@@ -14,6 +14,16 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
+const presignClient = new S3Client({
+  endpoint: process.env.MINIO_PUBLIC_URL || process.env.MINIO_ENDPOINT || "http://localhost:9000",
+  credentials: { 
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin', 
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin' 
+  },
+  region: process.env.AWS_REGION || 'us-east-1',
+  forcePathStyle: true,
+});
+
 export async function uploadRoutes(fastify: FastifyInstance) {
   const prisma = (fastify as unknown as { prisma: PrismaClient }).prisma;
 
@@ -22,9 +32,10 @@ export async function uploadRoutes(fastify: FastifyInstance) {
    * Validates user quota and returns a Presigned URL for direct-to-S3 upload.
    */
   fastify.post('/uploads/initiate', async (request, reply) => {
-    const { fileName, fileSize, userId } = request.body as {
+    const { fileName, fileSize, contentType, userId } = request.body as {
       fileName: string;
       fileSize: number;
+      contentType?: string;
       userId: string;
     };
 
@@ -57,14 +68,10 @@ export async function uploadRoutes(fastify: FastifyInstance) {
     const command = new PutObjectCommand({
       Bucket: 'velostream-uploads',
       Key: video.storageKey,
-      ContentType: 'video/mp4', // Optional: enforce type
+      ContentType: contentType || 'video/mp4', // Required to match the exact client upload
     });
 
-    let uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-
-    if (process.env.MINIO_ENDPOINT && process.env.MINIO_PUBLIC_URL) {
-      uploadUrl = uploadUrl.replace(process.env.MINIO_ENDPOINT, process.env.MINIO_PUBLIC_URL);
-    }
+    const uploadUrl = await getSignedUrl(presignClient, command, { expiresIn: 3600 });
 
     return { uploadUrl, videoId: video.id };
   });

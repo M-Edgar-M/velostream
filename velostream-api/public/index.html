@@ -67,6 +67,7 @@
           body: JSON.stringify({
             fileName: file.name,
             fileSize: file.size,
+            contentType: file.type || 'video/mp4',
             userId: testUserId
           })
         });
