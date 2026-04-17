@@ -45,7 +45,7 @@ services:
     volumes:
       - ./docker/postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d velostream"]
+      test: [ "CMD-SHELL", "pg_isready -U user -d velostream" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -65,7 +65,7 @@ services:
     volumes:
       - ./docker/minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,14 +79,8 @@ services:
         condition: service_healthy
     networks:
       - velostream_net
-    # FIXED: mc config is old; use mc alias set.
     entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      /usr/bin/mc mb myminio/velostream-uploads --ignore-existing;
-      /usr/bin/mc anonymous set public myminio/velostream-uploads;
-      exit 0;
-      "
+      /bin/sh -c " /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin; /usr/bin/mc mb myminio/velostream-uploads --ignore-existing; /usr/bin/mc anonymous set public myminio/velostream-uploads; exit 0; "
 
   redis:
     image: redis:7-alpine
@@ -98,7 +92,7 @@ services:
     volumes:
       - ./docker/redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
