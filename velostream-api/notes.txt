@@ -7,3 +7,12 @@ sudo docker exec -it velostream-redis-1 redis-cli -p 6379
 
 // RUN PRISMA STUDIO
 npx prisma studio
+
+// UP THE DOCKER 
+sudo docker compose --env-file .env.docker up --build
+
+// STOP THE DOCKER 
+sudo docker compose --env-file .env.docker down
+
+// DOWN AND CLEAN 
+sudo docker compose --env-file .env.docker down -v
