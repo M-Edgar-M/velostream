@@ -6,7 +6,7 @@ import { redisConnection } from "../queues/video.queue.ts";
 
 const execPromise = promisify(exec);
 
-export const legacyTranscodeWorker = new Worker('video-transcode-legacy', async (job) => {
+export const legacyTranscodeWorker = new Worker('video-transcode', async (job) => {
   const { videoId, storageKey, url } = job.data;
   
   console.time(`⏱️ Node-Transcode-${videoId}`);

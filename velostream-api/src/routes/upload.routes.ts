@@ -62,13 +62,23 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       }
     });
 
+    // 2. Enqueue transcode job — must happen before the response is sent
     const minioEndpoint = process.env.MINIO_ENDPOINT || 'http://minio:9000';
-    await transcodeQueue.add('process-video', {
-      videoId: video.id,
-      url: `${minioEndpoint}/velostream-uploads/${video.storageKey}`,
-      inputPath: `velostream-uploads/${video.storageKey}`
-    }, { jobId: video.id });
-    request.log.info({ videoId: video.id }, "transcode-video job added");
+    console.log("DEBUG: Attempting to add job to BullMQ", video.id);
+    try {
+      const job = await transcodeQueue.add('process-video', {
+        videoId: video.id,
+        url: `${minioEndpoint}/velostream-uploads/${video.storageKey}`,
+        inputPath: `velostream-uploads/${video.storageKey}`
+      }, { jobId: video.id });
+      console.log("DEBUG: Successfully added job", job.id);
+      request.log.info({ videoId: video.id, jobId: job.id }, "transcode-video job added to queue");
+    } catch (queueError) {
+      request.log.error({ videoId: video.id, err: queueError }, "FAILED to add transcode job to BullMQ queue");
+      console.error("DEBUG: transcodeQueue.add() threw an error:", queueError);
+      // Do not abort the upload — the video record exists and can be requeued.
+      // The error is logged so the operator can diagnose the Redis issue.
+    }
 
     // 3. Generate Presigned URL
     const command = new PutObjectCommand({
