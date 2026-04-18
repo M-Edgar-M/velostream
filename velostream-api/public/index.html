@@ -11,9 +11,47 @@
     .upload-btn:hover { background: #2563eb; }
     video { width: 100%; margin-top: 2rem; background: #000; border-radius: 8px; aspect-ratio: 16/9; }
     .input-row { display: flex; gap: 0.5rem; }
+    /* System Status Drawer */
+    #devDrawer { position: fixed; right: 0; top: 0; bottom: 0; width: 300px; background: #111; color: #0f0; font-family: 'Courier New', Courier, monospace; padding: 1rem; box-shadow: -2px 0 5px rgba(0,0,0,0.5); overflow-y: auto; transform: translateX(100%); transition: transform 0.3s ease; }
+    #devDrawer.open { transform: translateX(0); }
+    #devDrawer h3 { color: #fff; margin-top: 0; border-bottom: 1px solid #333; padding-bottom: 0.5rem; }
+    .drawer-toggle { position: fixed; right: 20px; bottom: 20px; background: #333; color: #fff; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; z-index: 1000; font-family: monospace;}
+    .drawer-toggle:hover { background: #555; }
+    .status-badge { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+    .badge-WAITING { background-color: yellow; }
+    .badge-PROCESSING { background-color: #3b82f6; animation: pulse 1s infinite alternate; }
+    .badge-COMPLETED { background-color: #10b981; }
+    .badge-FAILED { background-color: #ef4444; }
+    @keyframes pulse { from { opacity: 1; transform: scale(1); } to { opacity: 0.6; transform: scale(1.2); } }
+    .drawer-section { margin-bottom: 1.5rem; }
+    .drawer-section p { margin: 0.2rem 0; font-size: 0.9rem; }
+    .clear-btn { background: #ef4444; color: white; border: none; padding: 0.3rem 0.5rem; cursor: pointer; border-radius: 3px; font-family: monospace; margin-top: 0.5rem; }
   </style>
 </head>
 <body>
+  <button class="drawer-toggle" onclick="document.getElementById('devDrawer').classList.toggle('open')">Toggle Dev Mode</button>
+  <div id="devDrawer">
+    <h3>System Status</h3>
+    
+    <div class="drawer-section">
+      <strong>Storage Health:</strong> <span id="storageHealth">...</span>
+    </div>
+
+    <div class="drawer-section">
+      <strong>Queue Stats:</strong>
+      <p>Waiting: <span id="qWaiting">0</span></p>
+      <p>Active (Processing): <span id="qActive">0</span></p>
+      <p>Completed: <span id="qCompleted">0</span></p>
+      <p>Failed: <span id="qFailed">0</span></p>
+      <button class="clear-btn" id="clearQueueBtn">Clear Queue</button>
+    </div>
+
+    <div class="drawer-section">
+      <strong>Recent Videos:</strong>
+      <div id="recentVideosList"></div>
+    </div>
+  </div>
+
   <div class="container">
     <h1>🚀 VeloStream Flow</h1>
     
@@ -92,9 +130,9 @@
         elStatus.innerText = 'Upload complete! Waiting for transcode (check Rust output logs)...';
 
         // Suggest the HLS URL it will eventually generate
-        // Based on the code, Rust produces outputs/videoId/playlist.m3u8 
+        // Based on the code, Rust produces transcoded/videoId/playlist.m3u8 in the velostream-public bucket
         // We can pre-fill the stream URL for convenience.
-        const predictedUrl = `http://localhost:9000/velostream-uploads/outputs/${videoId}/playlist.m3u8`;
+        const predictedUrl = `http://localhost:9000/velostream-public/transcoded/${videoId}/playlist.m3u8`;
         document.getElementById('streamUrl').value = predictedUrl;
 
       } catch (err) {
@@ -117,11 +155,27 @@
         hls.on(Hls.Events.MANIFEST_PARSED, function() {
           video.play();
         });
-        // Error handling
+        // Detailed Error handling
         hls.on(Hls.Events.ERROR, function (event, data) {
+           console.warn('HLS Error Event:', data);
            if (data.fatal) {
-              console.error('Fatal HLS error:', data);
-              elStatus.innerText = 'Error: Stream not ready yet or invalid URL';
+              switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  console.error('Fatal network error encountered, try to recover.');
+                  elStatus.innerText = 'Network error fetching stream (Check CORS or 404).';
+                  hls.startLoad();
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  console.error('Fatal media error encountered, try to recover.');
+                  elStatus.innerText = 'Media error (corrupt segment).';
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  console.error('Fatal unrecoverable error.');
+                  elStatus.innerText = 'Unrecoverable stream error.';
+                  hls.destroy();
+                  break;
+              }
            }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -129,6 +183,43 @@
         video.addEventListener('loadedmetadata', function() {
           video.play();
         });
+      }
+    });
+
+    // 4. System Health Polling (Dev Mode)
+    async function fetchSystemHealth() {
+      try {
+        const res = await fetch('/internal/system-health');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        document.getElementById('storageHealth').innerText = data.storageHealthy ? '✅ Online' : '❌ Offline';
+        
+        if (data.queueStats) {
+          document.getElementById('qWaiting').innerText = data.queueStats.waiting || 0;
+          document.getElementById('qActive').innerText = data.queueStats.active || 0;
+          document.getElementById('qCompleted').innerText = data.queueStats.completed || 0;
+          document.getElementById('qFailed').innerText = data.queueStats.failed || 0;
+        }
+
+        if (data.recentVideos) {
+          const list = document.getElementById('recentVideosList');
+          list.innerHTML = data.recentVideos.map(v => 
+            `<p title="ID: ${v.id}"><span class="status-badge badge-${v.status}"></span>${v.originalFileName || 'Unknown'} (${v.status})</p>`
+          ).join('');
+        }
+      } catch (err) {
+        console.error('Failed to fetch system health', err);
+      }
+    }
+
+    setInterval(fetchSystemHealth, 3000);
+    fetchSystemHealth();
+
+    document.getElementById('clearQueueBtn').addEventListener('click', async () => {
+      if (confirm('Are you sure you want to wipe the redis queue?')) {
+        await fetch('/internal/clear-queue', { method: 'POST' });
+        fetchSystemHealth();
       }
     });
   </script>

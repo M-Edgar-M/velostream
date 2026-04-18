@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { PrismaClient } from '@prisma/client';
+import { transcodeQueue } from '../queues/video.queue';
 
 export async function internalRoutes(fastify: FastifyInstance) {
   const prisma = (fastify as any).prisma as PrismaClient;
@@ -29,5 +30,35 @@ export async function internalRoutes(fastify: FastifyInstance) {
     const user = await prisma.user.findFirst();
     if (!user) return reply.status(404).send({ error: "No user found. Did you run the seed script?" });
     return { id: user.id, email: user.email };
+  });
+  fastify.get('/system-health', async (request, reply) => {
+    const queueStats = await transcodeQueue.getJobCounts();
+    const recentVideos = await prisma.video.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, createdAt: true, originalFileName: true }
+    });
+
+    let storageHealthy = false;
+    try {
+      const minioUrl = process.env.MINIO_ENDPOINT || 'http://minio:9000';
+      const res = await fetch(`${minioUrl}/minio/health/live`);
+      storageHealthy = res.ok;
+    } catch (e) {
+      storageHealthy = false;
+    }
+
+    return { queueStats, recentVideos, storageHealthy };
+  });
+
+  fastify.post('/clear-queue', async (request, reply) => {
+    try {
+      await transcodeQueue.obliterate({ force: true });
+      return { success: true };
+    } catch (e) {
+      // If obliterate fails (e.g. redis busy), fallback to drain and clean
+      await transcodeQueue.drain(true);
+      return { success: true, message: "Drained queue" };
+    }
   });
 }

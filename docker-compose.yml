@@ -80,7 +80,14 @@ services:
     networks:
       - velostream_net
     entrypoint: >
-      /bin/sh -c " /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin; /usr/bin/mc mb myminio/velostream-uploads --ignore-existing; /usr/bin/mc anonymous set public myminio/velostream-uploads; exit 0; "
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/velostream-uploads --ignore-existing;
+      /usr/bin/mc anonymous set public myminio/velostream-uploads;
+      /usr/bin/mc mb myminio/velostream-public --ignore-existing;
+      /usr/bin/mc anonymous set public myminio/velostream-public;
+      exit 0;
+      "
 
   redis:
     image: redis:7-alpine

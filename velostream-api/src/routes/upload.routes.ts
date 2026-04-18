@@ -2,13 +2,13 @@ import { FastifyInstance } from 'fastify';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { PrismaClient } from '@prisma/client';
-import { probeQueue } from '../queues/video.queue';
+import { probeQueue, transcodeQueue } from '../queues/video.queue';
 
 const s3Client = new S3Client({
   endpoint: process.env.MINIO_ENDPOINT || "http://localhost:9000",
-  credentials: { 
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin', 
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin' 
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin'
   },
   region: process.env.AWS_REGION || 'us-east-1',
   forcePathStyle: true,
@@ -16,9 +16,9 @@ const s3Client = new S3Client({
 
 const presignClient = new S3Client({
   endpoint: process.env.MINIO_PUBLIC_URL || process.env.MINIO_ENDPOINT || "http://localhost:9000",
-  credentials: { 
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin', 
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin' 
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin'
   },
   region: process.env.AWS_REGION || 'us-east-1',
   forcePathStyle: true,
@@ -53,16 +53,22 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: "Quota exceeded. Please clear space or upgrade." });
     }
 
-    // 2. Create PENDING Database Record
     const video = await prisma.video.create({
       data: {
         userId,
         originalFileName: fileName,
         status: 'PENDING',
-        // Prefix with userId and timestamp to prevent naming collisions
         storageKey: `uploads/${userId}/${Date.now()}-${fileName}`,
       }
     });
+
+    const minioEndpoint = process.env.MINIO_ENDPOINT || 'http://minio:9000';
+    await transcodeQueue.add('process-video', {
+      videoId: video.id,
+      url: `${minioEndpoint}/velostream-uploads/${video.storageKey}`,
+      inputPath: `velostream-uploads/${video.storageKey}`
+    }, { jobId: video.id });
+    request.log.info({ videoId: video.id }, "transcode-video job added");
 
     // 3. Generate Presigned URL
     const command = new PutObjectCommand({
@@ -116,12 +122,12 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       data: { status: 'PROCESSING' }
     });
 
-	await probeQueue.add('probe-metadata', { 
-  videoId: videoAnyStatus.id, 
-  storageKey: videoAnyStatus.storageKey 
-});
+    await probeQueue.add('probe-metadata', {
+      videoId: videoAnyStatus.id,
+      storageKey: videoAnyStatus.storageKey
+    });
 
-request.log.info({ videoId: videoAnyStatus.id }, "probe-metadata job added");
+    request.log.info({ videoId: videoAnyStatus.id }, "probe-metadata job added");
 
     // NEXT STEP: Emit job to BullMQ (Phase 2)
     return reply.status(200).send({ success: true });
