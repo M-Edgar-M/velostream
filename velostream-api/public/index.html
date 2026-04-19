@@ -18,10 +18,10 @@
     .drawer-toggle { position: fixed; right: 20px; bottom: 20px; background: #333; color: #fff; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; z-index: 1000; font-family: monospace;}
     .drawer-toggle:hover { background: #555; }
     .status-badge { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
-    .badge-WAITING { background-color: yellow; }
+    .badge-PENDING    { background-color: #d1d5db; }
     .badge-PROCESSING { background-color: #3b82f6; animation: pulse 1s infinite alternate; }
-    .badge-COMPLETED { background-color: #10b981; }
-    .badge-FAILED { background-color: #ef4444; }
+    .badge-COMPLETED  { background-color: #10b981; }
+    .badge-FAILED     { background-color: #ef4444; }
     @keyframes pulse { from { opacity: 1; transform: scale(1); } to { opacity: 0.6; transform: scale(1.2); } }
     .drawer-section { margin-bottom: 1.5rem; }
     .drawer-section p { margin: 0.2rem 0; font-size: 0.9rem; }
@@ -38,12 +38,12 @@
     </div>
 
     <div class="drawer-section">
-      <strong>Queue Stats:</strong>
-      <p>Waiting: <span id="qWaiting">0</span></p>
-      <p>Active (Processing): <span id="qActive">0</span></p>
+      <strong>Pipeline (from DB):</strong>
+      <p>Waiting (PENDING): <span id="qWaiting">0</span></p>
+      <p>Active (PROCESSING): <span id="qActive">0</span></p>
       <p>Completed: <span id="qCompleted">0</span></p>
       <p>Failed: <span id="qFailed">0</span></p>
-      <button class="clear-btn" id="clearQueueBtn">Clear Queue</button>
+      <button class="clear-btn" id="resetBtn">Reset System</button>
     </div>
 
     <div class="drawer-section">
@@ -55,7 +55,7 @@
   <div class="container">
     <h1>🚀 VeloStream Flow</h1>
     
-    <label>1. Select File &lt; 20MB</label><br/>
+    <label>1. Select a video file</label><br/>
     <input type="file" id="videoInput" accept="video/mp4" />
     <button id="uploadBtn" class="upload-btn">Upload</button>
 
@@ -126,7 +126,18 @@
         });
 
         if (!uploadRes.ok) throw new Error('Upload failed with status ' + uploadRes.status);
-        
+
+        elStatus.innerText = 'Confirming upload and starting pipeline...';
+        const ackRes = await fetch(`/uploads/${videoId}/ack`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: testUserId })
+        });
+        const ackBody = await ackRes.json().catch(() => ({}));
+        if (!ackRes.ok) {
+          throw new Error(ackBody.error || 'Upload ack failed with status ' + ackRes.status);
+        }
+
         elStatus.innerText = 'Upload complete! Waiting for transcode (check Rust output logs)...';
 
         // Suggest the HLS URL it will eventually generate
@@ -194,12 +205,12 @@
         const data = await res.json();
         
         document.getElementById('storageHealth').innerText = data.storageHealthy ? '✅ Online' : '❌ Offline';
-        
-        if (data.queueStats) {
-          document.getElementById('qWaiting').innerText = data.queueStats.waiting || 0;
-          document.getElementById('qActive').innerText = data.queueStats.active || 0;
-          document.getElementById('qCompleted').innerText = data.queueStats.completed || 0;
-          document.getElementById('qFailed').innerText = data.queueStats.failed || 0;
+
+        if (data.pipelineStats) {
+          document.getElementById('qWaiting').innerText = data.pipelineStats.waiting ?? 0;
+          document.getElementById('qActive').innerText = data.pipelineStats.active ?? 0;
+          document.getElementById('qCompleted').innerText = data.pipelineStats.completed ?? 0;
+          document.getElementById('qFailed').innerText = data.pipelineStats.failed ?? 0;
         }
 
         if (data.recentVideos) {
@@ -216,10 +227,16 @@
     setInterval(fetchSystemHealth, 3000);
     fetchSystemHealth();
 
-    document.getElementById('clearQueueBtn').addEventListener('click', async () => {
-      if (confirm('Are you sure you want to wipe the redis queue?')) {
-        await fetch('/internal/clear-queue', { method: 'POST' });
-        fetchSystemHealth();
+    document.getElementById('resetBtn').addEventListener('click', async () => {
+      if (confirm('Delete ALL videos and flush queues? This cannot be undone.')) {
+        const res = await fetch('/internal/reset', { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert('Reset failed: ' + (body.error || res.status));
+        } else {
+          if (body.warnings?.length) alert('Reset done (warnings): ' + body.warnings.join(', '));
+          fetchSystemHealth();
+        }
       }
     });
   </script>

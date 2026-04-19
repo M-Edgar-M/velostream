@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Worker } from "bullmq";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { redisConnection } from "../queues/video.queue.ts";
+import { redisConnection } from "../queues/video.queue";
 
 const execPromise = promisify(exec);
 

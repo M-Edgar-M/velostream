@@ -16,3 +16,21 @@ sudo docker compose --env-file .env.docker down
 
 // DOWN AND CLEAN 
 sudo docker compose --env-file .env.docker down -v
+
+// DELETE DATA BEFORE TESTS
+sudo docker exec -it velostream-postgres-1 psql -U user -d velostream -c 'TRUNCATE TABLE "Video" CASCADE;'
+
+// REBUILD AND RESTART API ONLY
+sudo docker compose --env-file .env.docker up --build --no-deps api
+
+// REBUILD AND RESTART RUST WORKER ONLY
+sudo docker compose --env-file .env.docker up --build --no-deps worker
+
+// REBUILD BOTH API AND WORKER
+sudo docker compose --env-file .env.docker up --build --no-deps api worker
+
+// DOCKER API LOGS
+sudo docker compose logs -f api
+
+// DOCKER WORKER LOGS
+sudo docker compose logs -f worker

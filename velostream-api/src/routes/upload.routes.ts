@@ -1,9 +1,10 @@
 import { FastifyInstance } from 'fastify';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { PrismaClient } from '@prisma/client';
-import { probeQueue, transcodeQueue } from '../queues/video.queue';
+import { transcodeQueue } from '../queues/video.queue';
 
+// Internal client — container-to-container, used to build URLs the Rust worker can reach
 const s3Client = new S3Client({
   endpoint: process.env.MINIO_ENDPOINT || "http://localhost:9000",
   credentials: {
@@ -14,6 +15,7 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
+// Public client — browser-facing presigned URLs use the host-visible address
 const presignClient = new S3Client({
   endpoint: process.env.MINIO_PUBLIC_URL || process.env.MINIO_ENDPOINT || "http://localhost:9000",
   credentials: {
@@ -62,25 +64,10 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       }
     });
 
-    // 2. Enqueue transcode job — must happen before the response is sent
-    const minioEndpoint = process.env.MINIO_ENDPOINT || 'http://minio:9000';
-    console.log("DEBUG: Attempting to add job to BullMQ", video.id);
-    try {
-      const job = await transcodeQueue.add('process-video', {
-        videoId: video.id,
-        url: `${minioEndpoint}/velostream-uploads/${video.storageKey}`,
-        inputPath: `velostream-uploads/${video.storageKey}`
-      }, { jobId: video.id });
-      console.log("DEBUG: Successfully added job", job.id);
-      request.log.info({ videoId: video.id, jobId: job.id }, "transcode-video job added to queue");
-    } catch (queueError) {
-      request.log.error({ videoId: video.id, err: queueError }, "FAILED to add transcode job to BullMQ queue");
-      console.error("DEBUG: transcodeQueue.add() threw an error:", queueError);
-      // Do not abort the upload — the video record exists and can be requeued.
-      // The error is logged so the operator can diagnose the Redis issue.
-    }
+    // Do not enqueue transcode here: the object does not exist until the client finishes the PUT.
+    // Call POST /uploads/:videoId/ack after upload (or rely on the MinIO webhook).
 
-    // 3. Generate Presigned URL
+    // 2. Generate Presigned URL
     const command = new PutObjectCommand({
       Bucket: 'velostream-uploads',
       Key: video.storageKey,
@@ -90,6 +77,67 @@ export async function uploadRoutes(fastify: FastifyInstance) {
     const uploadUrl = await getSignedUrl(presignClient, command, { expiresIn: 3600 });
 
     return { uploadUrl, videoId: video.id };
+  });
+
+  /**
+   * After a successful direct-to-S3 PUT, the client calls this to start the transcode pipeline.
+   * Confirms the object exists, then enqueues directly to the transcode queue so the
+   * Rust worker can pick it up immediately — no intermediate probe step required.
+   */
+  fastify.post('/uploads/:videoId/ack', async (request, reply) => {
+    const { videoId } = request.params as { videoId: string };
+    const { userId } = (request.body as { userId?: string }) || {};
+
+    if (!userId) {
+      return reply.status(400).send({ error: 'userId is required' });
+    }
+
+    const video = await prisma.video.findUnique({ where: { id: videoId } });
+    if (!video || video.userId !== userId) {
+      return reply.status(404).send({ error: 'Video not found' });
+    }
+
+    if (video.status !== 'PENDING') {
+      return { ok: true, alreadyStarted: true, status: video.status };
+    }
+
+    // Confirm the object is in storage before touching the queue
+    try {
+      await s3Client.send(
+        new HeadObjectCommand({ Bucket: 'velostream-uploads', Key: video.storageKey })
+      );
+    } catch {
+      return reply
+        .status(400)
+        .send({ error: 'Object not in storage yet; complete the PUT to MinIO first' });
+    }
+
+    // Build a long-lived signed URL using the INTERNAL endpoint so the Rust
+    // worker container can reach MinIO directly (minio:9000, not localhost).
+    const internalUrl = await getSignedUrl(
+      s3Client,
+      new GetObjectCommand({ Bucket: 'velostream-uploads', Key: video.storageKey }),
+      { expiresIn: 86400 }
+    );
+
+    await prisma.video.update({ where: { id: video.id }, data: { status: 'PROCESSING' } });
+
+    try {
+      const job = await transcodeQueue.add(
+        'transcode-video',
+        { videoId: video.id, url: internalUrl },
+        { jobId: video.id }
+      );
+      request.log.info({ videoId: video.id, jobId: job.id }, 'transcode job enqueued');
+    } catch (queueError) {
+      await prisma.video
+        .update({ where: { id: video.id }, data: { status: 'PENDING' } })
+        .catch(() => undefined);
+      request.log.error({ videoId: video.id, err: queueError }, 'transcodeQueue.add failed');
+      return reply.status(503).send({ error: 'Queue unavailable; retry shortly' });
+    }
+
+    return { ok: true, videoId: video.id };
   });
 
   fastify.post("/webhooks/minio", async (request, reply) => {
@@ -132,14 +180,21 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       data: { status: 'PROCESSING' }
     });
 
-    await probeQueue.add('probe-metadata', {
-      videoId: videoAnyStatus.id,
-      storageKey: videoAnyStatus.storageKey
-    });
+    // Build a long-lived signed URL the Rust container can reach
+    const internalUrl = await getSignedUrl(
+      s3Client,
+      new GetObjectCommand({ Bucket: 'velostream-uploads', Key: videoAnyStatus.storageKey }),
+      { expiresIn: 86400 }
+    );
 
-    request.log.info({ videoId: videoAnyStatus.id }, "probe-metadata job added");
+    await transcodeQueue.add(
+      'transcode-video',
+      { videoId: videoAnyStatus.id, url: internalUrl },
+      { jobId: videoAnyStatus.id }
+    );
 
-    // NEXT STEP: Emit job to BullMQ (Phase 2)
+    request.log.info({ videoId: videoAnyStatus.id }, "transcode job enqueued (webhook)");
+
     return reply.status(200).send({ success: true });
   });
 }

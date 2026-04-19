@@ -1,16 +1,14 @@
 import 'dotenv/config'; // Absolute first line to fix environment hoisting
-import { Worker, Queue } from "bullmq";
+import { Worker } from "bullmq";
 import { prisma } from "../plugins/prisma.ts"; // Now importing the named constant
 import { exec } from "child_process";
 import { promisify } from "util";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "../services/storage.service.ts";
-import { redisConnection } from "../queues/video.queue.ts";
+import { redisConnection, transcodeQueue } from "../queues/video.queue";
 
 const execPromise = promisify(exec);
-
-    const transcodeQueue = new Queue('video-transcode', {connection: redisConnection });
 
 export const probeWorker = new Worker('video-probe', async (job) => {
   const { videoId, storageKey } = job.data;
