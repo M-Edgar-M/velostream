@@ -11,6 +11,7 @@
     .upload-btn:hover { background: #2563eb; }
     video { width: 100%; margin-top: 2rem; background: #000; border-radius: 8px; aspect-ratio: 16/9; }
     .input-row { display: flex; gap: 0.5rem; }
+    .upload-hint { margin: 0.3rem 0 0.8rem; color: #6b7280; font-size: 0.9rem; }
     /* System Status Drawer */
     #devDrawer { position: fixed; right: 0; top: 0; bottom: 0; width: 300px; background: #111; color: #0f0; font-family: 'Courier New', Courier, monospace; padding: 1rem; box-shadow: -2px 0 5px rgba(0,0,0,0.5); overflow-y: auto; transform: translateX(100%); transition: transform 0.3s ease; }
     #devDrawer.open { transform: translateX(0); }
@@ -57,6 +58,7 @@
     
     <label>1. Select a video file</label><br/>
     <input type="file" id="videoInput" accept="video/mp4" />
+    <p class="upload-hint">Max file size: 15MB</p>
     <button id="uploadBtn" class="upload-btn">Upload</button>
 
     <div id="status" style="margin-top: 1rem; color: #6b7280; font-style: italic;">Ready</div>
@@ -72,7 +74,28 @@
 
   <script>
     const elStatus = document.getElementById('status');
+    const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
     let testUserId = null;
+
+    const fileInputEl = document.getElementById('videoInput');
+
+    function validateSelectedFile(file) {
+      if (!file) return false;
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        alert('File is too large. Maximum allowed size is 15MB.');
+        fileInputEl.value = '';
+        elStatus.innerText = 'Error: Selected file exceeds 15MB limit.';
+        return false;
+      }
+      return true;
+    }
+
+    fileInputEl.addEventListener('change', (event) => {
+      const selectedFile = event.target.files[0];
+      if (selectedFile) {
+        validateSelectedFile(selectedFile);
+      }
+    });
 
     // 1. Fetch the seeded test user ON LOAD
     fetch('/internal/test-user')
@@ -89,10 +112,10 @@
 
     // 2. Handle Upload
     document.getElementById('uploadBtn').addEventListener('click', async () => {
-      const fileInput = document.getElementById('videoInput');
-      const file = fileInput.files[0];
+      const file = fileInputEl.files[0];
       
       if (!file) return alert('Please select a file first.');
+      if (!validateSelectedFile(file)) return;
       if (!testUserId) return alert('User ID not loaded. Please wait and try again.');
 
       try {
